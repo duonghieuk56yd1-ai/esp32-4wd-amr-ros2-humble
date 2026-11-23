@@ -1,0 +1,14 @@
+# Tham số mặc định của node amr_lidar_bridge/lidar_bridge
+lidar_bridge:
+  ros__parameters:
+    udp_port: 8889              # trùng LIDAR_UDP_PORT trong firmware_esp32/include/robot_config.h
+    bind_address: "0.0.0.0"     # lắng nghe trên mọi card mạng
+    frame_id: "laser_frame"     # trùng link LiDAR trong amr_description
+    use_device_stamp: true      # dùng stamp ESP32 (đã đồng bộ với micro-ROS agent)
+    max_stamp_skew: 1.0         # lệch quá (s) -> dùng giờ nhận gói
+    time_offset: 0.0            # cộng thêm vào stamp (s), tinh chỉnh độ trễ nếu cần
+    range_min: -1.0             # > 0 để ghi đè giá trị trong gói
+    range_max: -1.0
+    allowed_source_ip: ""       # rỗng = nhận từ mọi IP; đặt IP ESP32 nếu có nhiều robot
+    reliable_qos: true          # reliable tương thích mọi subscriber
+    data_timeout: 2.0           # cảnh báo khi không có gói quá thời gian này (s)

@@ -1,0 +1,7 @@
+build/
+install/
+log/
+__pycache__/
+*.pyc
+# mã nguồn micro-ROS agent tải bằng: vcs import src < micro_ros_agent.repos
+/src/micro_ros/
