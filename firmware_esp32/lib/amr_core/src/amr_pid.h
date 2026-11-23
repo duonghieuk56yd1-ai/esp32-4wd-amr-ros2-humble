@@ -3,7 +3,8 @@
 //
 //   * Thành phần I lưu ở đơn vị đầu ra (đã nhân KI) -> đổi KI lúc chạy không giật.
 //   * Anti-windup kép: (1) kẹp |I| <= integral_limit, (2) tích phân có điều kiện:
-//     ngừng tích luỹ khi đầu ra đã bão hoà và sai số còn đẩy sâu thêm vào bão hoà.
+//     khi sai số còn đẩy đầu ra vào bão hoà, I chỉ tăng tới mức đầu ra vừa chạm
+//     giới hạn (motor nhận đủ 100 % duty) rồi dừng -> không windup, không hụt lực.
 //   * Thành phần D tính trên GIÁ TRỊ ĐO (không giật khi đổi setpoint) và đi qua
 //     bộ lọc thông thấp bậc 1 (hằng số thời gian d_filter_tau_s).
 // =============================================================================
@@ -40,7 +41,7 @@ class PidController {
 
   float output() const { return output_; }
   float integralTerm() const { return i_term_; }
-  bool saturated() const { return saturated_; }
+  bool saturated() const { return saturated_; }  // đầu ra đang ở (hoặc vượt) giới hạn
 
  private:
   PidGains gains_{};

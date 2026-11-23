@@ -50,7 +50,7 @@ firmware_esp32/
 │   ├── motor_driver.*        # TB6612FNG + LEDC PWM 20 kHz
 │   └── shared_state.*        # dữ liệu dùng chung giữa các task
 ├── lib/amr_core/             # logic thuần (test được trên PC): PID, động học, encoder, gói LiDAR
-├── test/test_amr_core/       # unit test Unity: pio test -e native
+├── test/                     # 4 bộ unit test Unity (động học, PID, encoder, gói LiDAR): pio test -e native
 ├── extra_packages/tf2_msgs/  # gói tf2_msgs (ROS 2 Humble) để micro-ROS build kèm -> publish /tf
 └── tools/lidar_udp_monitor.py# công cụ Laptop: nhận & giải mã gói LiDAR (không cần ROS)
 ```
@@ -246,9 +246,11 @@ Mỗi vòng quét là **một** datagram (little-endian), 360 tia + cường đ�
 | Duty bão hoà mà bánh **không quay** > 1 s | `FAULT`: kẹt bánh hoặc mất tín hiệu encoder |
 | Xoá `FAULT` | Gửi `/cmd_vel` bằng 0 |
 
-"Liên lạc tốt" được xác định bằng: ping agent thành công, `/odom` hoặc `/tf` (reliable) được agent
-xác nhận, hoặc nhận `/cmd_vel`. Wi-Fi tắt modem-sleep để giảm trễ; firmware tự kết nối lại Wi-Fi và
-tạo lại phiên micro-ROS (kể cả khi agent khởi động lại).
+"Liên lạc tốt" = **mọi gói UDP nhận từ agent** (ACK của `/odom`/`/tf` reliable, trả lời ping, đồng
+bộ giờ, `/cmd_vel`), đọc ngay ở tầng transport — Wi-Fi chỉ trễ thì không bị failsafe giả, agent im
+lặng thật > 500 ms thì ngắt motor. Phiên micro-ROS được tạo lại khi agent im lặng > 1.5 s hoặc khi
+3 lần đồng bộ giờ liên tiếp thất bại (agent khởi động lại vẫn trả lời ping nhưng đã mất phiên cũ).
+Wi-Fi tắt modem-sleep để giảm trễ; firmware tự kết nối lại Wi-Fi.
 
 ## LED trạng thái (GPIO 2)
 
@@ -274,8 +276,9 @@ tạo lại phiên micro-ROS (kể cả khi agent khởi động lại).
 
    Cả hai bánh phải lăn tới. Bánh nào quay ngược thì đổi `MOTOR_*_INVERTED` của bánh đó (nếu
    motor và encoder lệch chiều nhau, firmware báo `FAULT ... quay NGUOC chieu lenh` và tự ngắt).
-4. **Hiệu chỉnh odometry:** cho robot đi thẳng 1 m đo thực tế → chỉnh `WHEEL_RADIUS_M` cho
-   `/odom` x = 1.0; quay tại chỗ 10 vòng → chỉnh `WHEEL_SEPARATION_M` cho yaw đúng.
+4. **Hiệu chỉnh odometry:** `ros2 run amr_bringup calibrate_odom` (gói `amr_bringup` trong
+   `ros2_ws`) — đi thẳng ~1 m rồi nhập quãng đường đo bằng thước → `WHEEL_RADIUS_M` mới; quay tại chỗ
+   N vòng rồi nhập N → `WHEEL_SEPARATION_M` mới. Sửa cả URDF cho trùng (xem README gốc, Bước 2.5).
 5. **Chỉnh PID:** quan sát `wL=đo/đặt` trên Serial hoặc `ros2 topic echo /joint_states`. Tăng
    `PID_KP` tới khi bám nhanh nhưng chưa dao động, tăng `PID_KI` để hết sai số xác lập; thường
    `PID_KD = 0`. Đo tốc độ bánh tối đa thực tế (có tải) và đặt `MAX_WHEEL_SPEED_RAD_S` ~80 % giá trị đó.
@@ -286,9 +289,14 @@ tạo lại phiên micro-ROS (kể cả khi agent khởi động lại).
 pio test -e native
 ```
 
-17 test: bảng giải mã quadrature (kể cả nảy cạnh/mất cạnh), PID (kẹp, anti-windup, D trên giá trị
-đo, vòng kín với mô hình motor), động học & odometry (đi thẳng, quay tại chỗ, cung tròn), gom tia
-LiDAR và đóng gói/giải mã UDP.
+46 test trong 4 bộ (chạy riêng một bộ: `pio test -e native -f test_pid`):
+
+| Bộ | Nội dung |
+|---|---|
+| `test_kinematics` | động học vi sai thuận/nghịch, giới hạn tốc độ giữ độ cong, chuẩn hoá góc, odometry (thẳng, lùi, quay tại chỗ, cung tròn, vòng tròn khép kín, không phụ thuộc bước tích phân, liền mạch quanh ngưỡng RK2/cung tròn), chuỗi tick encoder → odometry so với nghiệm giải tích, giới hạn trong `robot_config.h` tự nhất quán |
+| `test_pid` | P/I/D, kẹp, anti-windup (I chỉ tích phân tới đúng biên bão hoà), D trên giá trị đo + lọc, đối xứng tiến/lùi, reset, đổi gain không giật, đầu vào NaN; vòng kín với mô hình motor JGA25 + encoder lượng tử hoá (bám đích, đảo chiều, chịu tải, hồi phục sau bão hoà) |
+| `test_scan_packet` | gom tia (đổi chiều quay, bù góc, quấn 360°, giữ điểm gần nhất, lọc tầm đo), bố cục header từng byte, đóng gói/giải mã, giới hạn MTU, gói hỏng/cắt cụt, giải mã gói do `amr_lidar_bridge/packet.py` tạo |
+| `test_quadrature` | bảng giải mã x4 (phản đối xứng, nảy cạnh, mất cạnh), 1 vòng bánh = 1496 tick, bộ đếm tràn 32 bit, tick → rad |
 
 ## Xử lý sự cố
 
@@ -298,7 +306,8 @@ LiDAR và đóng gói/giải mã UDP.
 | LED nháy chậm mãi | Agent đã chạy `udp4 --port 8888`? Firewall Laptop? `AGENT_IP` đúng IP Laptop? |
 | Có node nhưng không thấy topic | `ROS_DOMAIN_ID` hai bên, chạy `ros2 daemon stop` rồi thử lại |
 | TF cảnh báo thời gian / extrapolation | Đồng hồ ESP32 đồng bộ với agent; kiểm tra Serial có `Dong bo thoi gian voi agent OK` |
-| Robot chạy giật khi dùng teleop bàn phím | Lệnh chỉ gửi khi bấm phím; tăng/tắt `CMD_VEL_TIMEOUT_MS` hoặc giữ phím |
+| Robot chạy giật khi dùng teleop bàn phím | Lệnh chỉ gửi khi bấm phím: giữ phím, hoặc tăng/tắt `CMD_VEL_TIMEOUT_MS` |
+| ESP32 tự reset, log `Brownout detector was triggered` | Nguồn: ESP32 lấy 5 V từ buck riêng đi thẳng từ pin, tụ 1000 µF, GND hình sao (README gốc, mục 2) |
 | `lidar=--` | Dây TX LiDAR → GPIO 16, nguồn 5 V đủ dòng, đúng macro model trong `robot_config.h` |
 | Scan bị lật gương / lệch góc | Đổi `LIDAR_ANGLE_CLOCKWISE`, chỉnh `LIDAR_YAW_OFFSET_DEG` |
 
@@ -312,4 +321,5 @@ LiDAR và đóng gói/giải mã UDP.
   `extra_packages/tf2_msgs` (nguyên bản từ `ros2/geometry2` nhánh humble, giấy phép BSD).
 * micro-ROS mặc định: MTU 512 B, lịch sử stream 4 → message reliable tối đa ~2 KB
   (`/odom` ~0.7 KB được phân mảnh tự động). Thời gian chờ xác nhận publish reliable được giảm từ
-  1000 ms xuống 50 ms để vòng publish không bị treo khi Wi-Fi kém.
+  1000 ms xuống 30 ms để vòng publish không bị treo khi Wi-Fi kém (gói vẫn được gửi lại/xác nhận
+  muộn, không mất dữ liệu).

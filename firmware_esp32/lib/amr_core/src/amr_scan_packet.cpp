@@ -177,6 +177,11 @@ bool decodeScanPacket(const uint8_t* buf, size_t len, ScanPacketView& out) {
 
   const bool with_intensity = (v.flags & kScanFlagIntensity) != 0;
   if (len != scanPacketSize(v.num_ranges, with_intensity)) return false;
+  // Giống amr_lidar_bridge/packet.py: phải có ít nhất 1 tia và thông tin góc hợp lệ
+  if (v.num_ranges == 0 || !std::isfinite(v.angle_min_rad) ||
+      !std::isfinite(v.angle_increment_rad) || !(v.angle_increment_rad > 0.0f)) {
+    return false;
+  }
 
   v.ranges_le = buf + kScanHeaderSize;
   v.intensities = with_intensity ? v.ranges_le + 2u * v.num_ranges : nullptr;

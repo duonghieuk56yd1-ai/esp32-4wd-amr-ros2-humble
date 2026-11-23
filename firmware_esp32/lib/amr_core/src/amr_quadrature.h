@@ -53,5 +53,17 @@ constexpr int8_t delta(uint8_t code) {
   return code == kForward ? 1 : (code == kReverse ? -1 : 0);
 }
 
+// Số tick đã đi giữa hai lần đọc bộ đếm 32 bit, đúng cả khi bộ đếm tràn
+// (INT32_MAX -> INT32_MIN) nhờ phép trừ không dấu.
+constexpr int32_t tickDelta(int32_t now, int32_t prev) {
+  return static_cast<int32_t>(static_cast<uint32_t>(now) - static_cast<uint32_t>(prev));
+}
+
+// Đổi số tick (đã giải mã x4) sang góc quay bánh xe (rad).
+constexpr double ticksToRadians(int64_t ticks, int32_t ticks_per_rev) {
+  return static_cast<double>(ticks) * (2.0 * 3.14159265358979323846) /
+         static_cast<double>(ticks_per_rev);
+}
+
 }  // namespace quad
 }  // namespace amr

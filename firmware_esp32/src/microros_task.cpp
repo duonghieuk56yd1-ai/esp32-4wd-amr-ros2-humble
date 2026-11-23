@@ -34,15 +34,19 @@ inline void ignoreResult(rcl_ret_t) {}  // (void) không tắt được warn_unu
 
 // ---- Thời gian / timeout -----------------------------------------------------
 constexpr int64_t kPublishPeriodUs = 1000000LL / ODOM_PUBLISH_HZ;
-constexpr int kReliablePublishTimeoutMs = 50;  // chờ agent xác nhận gói reliable (mặc định 1000)
-constexpr uint32_t kPingPeriodMs = 100;        // ping khi không có bằng chứng liên lạc gần đây
-constexpr int kPingTimeoutMs = 50;
+// rcl_publish() reliable chờ agent xác nhận tối đa chừng này (mặc định 1000 ms) rồi đi tiếp;
+// gói vẫn được gửi lại/xác nhận muộn nên Wi-Fi trễ không làm mất dữ liệu.
+constexpr int kReliablePublishTimeoutMs = 30;
+constexpr uint32_t kPingPeriodMs = 100;        // ping khi quá lâu không nhận gói nào từ agent
+constexpr int kPingTimeoutMs = 100;
 constexpr uint32_t kWaitAgentPingPeriodMs = 500;
-constexpr int kWaitAgentPingTimeoutMs = 100;
-constexpr uint32_t kAgentLostMs = 1500;        // không liên lạc được -> huỷ & tạo lại phiên
-constexpr uint32_t kSessionDeadMs = 2500;      // không gói reliable nào được xác nhận
-constexpr int kTimeSyncTimeoutMs = 100;
-constexpr uint32_t kTimeSyncRetryMs = 250;
+constexpr int kWaitAgentPingTimeoutMs = 200;
+constexpr uint32_t kAgentLostMs = 1500;        // không nhận gói nào -> huỷ & tạo lại phiên
+// Đồng bộ đồng hồ đồng thời là phép thử phiên: agent khởi động lại (mất phiên cũ) vẫn
+// trả lời ping nhưng không trả lời đồng bộ của phiên. Timeout rộng để chịu Wi-Fi trễ.
+constexpr int kTimeSyncTimeoutMs = 500;
+constexpr uint32_t kTimeSyncRetryMs = 1000;
+constexpr int kMaxTimeSyncFailures = 3;        // thất bại liên tiếp -> tạo lại phiên
 constexpr uint32_t kTaskStackBytes = 12288;
 
 enum class AgentState : uint8_t { kWaitingWifi, kWaitingAgent, kCreating, kConnected, kDestroying };
@@ -130,6 +134,17 @@ void setStamp(builtin_interfaces__msg__Time& t, int64_t ns) {
   if (ns < 0) ns = 0;
   t.sec = static_cast<int32_t>(ns / 1000000000LL);
   t.nanosec = static_cast<uint32_t>(ns % 1000000000LL);
+}
+
+// ---- Transport: đọc UDP + "nhịp tim" ------------------------------------------------
+// Bọc hàm đọc UDP của micro_ros_platformio: MỌI gói nhận được từ agent (ACK, pong, dữ
+// liệu) chứng tỏ liên lạc còn sống -> failsafe chỉ kích hoạt khi agent im lặng thật sự,
+// không bị kích hoạt giả khi Wi-Fi chỉ trễ.
+size_t transportRead(uxrCustomTransport* transport, uint8_t* buf, size_t len, int timeout,
+                     uint8_t* err) {
+  const size_t n = platformio_transport_read(transport, buf, len, timeout, err);
+  if (n > 0) shared::markLinkAlive();
+  return n;
 }
 
 // ---- Callback /cmd_vel ------------------------------------------------------------
@@ -239,8 +254,9 @@ bool syncTime() {
 }
 
 // ---- Publish /odom, /joint_states, /tf ----------------------------------------------
-// Trả về true nếu mọi gói reliable được agent xác nhận.
-bool publishState(const RobotStateSample& s) {
+// Kết quả rcl_publish() của gói reliable chỉ cho biết agent đã xác nhận kịp trong
+// kReliablePublishTimeoutMs hay chưa (Wi-Fi trễ vẫn nhận muộn) -> không dùng làm nhịp tim.
+void publishState(const RobotStateSample& s) {
   const int64_t stamp_ns = shared::toRosTimeNs(s.stamp_us);
   const double qz = std::sin(0.5 * s.yaw);
   const double qw = std::cos(0.5 * s.yaw);
@@ -256,7 +272,7 @@ bool publishState(const RobotStateSample& s) {
   pose.orientation.w = qw;
   g_odom_msg.twist.twist.linear.x = s.linear;
   g_odom_msg.twist.twist.angular.z = s.angular;
-  bool ok = rcl_publish(&g_e.odom_pub, &g_odom_msg, nullptr) == RCL_RET_OK;
+  ignoreResult(rcl_publish(&g_e.odom_pub, &g_odom_msg, nullptr));
 
   setStamp(g_joint_msg.header.stamp, stamp_ns);
   g_joint_position[0] = s.wheel_pos_rad[0];
@@ -274,9 +290,8 @@ bool publishState(const RobotStateSample& s) {
   g_tf_transform.transform.rotation.y = 0.0;
   g_tf_transform.transform.rotation.z = qz;
   g_tf_transform.transform.rotation.w = qw;
-  ok = (rcl_publish(&g_e.tf_pub, &g_tf_msg, nullptr) == RCL_RET_OK) && ok;
+  ignoreResult(rcl_publish(&g_e.tf_pub, &g_tf_msg, nullptr));
 #endif
-  return ok;
 }
 
 // ---- Task chính ---------------------------------------------------------------------
@@ -284,13 +299,13 @@ void microrosTask(void*) {
   initMessages();
   ignoreResult(rmw_uros_set_custom_transport(false, &g_locator, platformio_transport_open,
                                              platformio_transport_close,
-                                             platformio_transport_write, platformio_transport_read));
+                                             platformio_transport_write, transportRead));
 
   AgentState state = AgentState::kWaitingWifi;
   uint32_t last_ping_ms = 0;
   uint32_t last_sync_ms = 0;
-  uint32_t last_pub_ok_ms = 0;
   uint32_t last_pub_seq = 0;
+  int sync_failures = 0;
   bool synced_this_session = false;
   int64_t next_pub_us = 0;
 
@@ -337,9 +352,9 @@ void microrosTask(void*) {
           shared::setAgentConnected(true);
           shared::markLinkAlive();
           state = AgentState::kConnected;
-          last_pub_ok_ms = millis();
-          last_ping_ms = last_pub_ok_ms;
-          last_sync_ms = last_pub_ok_ms - kTimeSyncRetryMs;
+          last_ping_ms = millis();
+          last_sync_ms = last_ping_ms - kTimeSyncRetryMs;  // đồng bộ ngay
+          sync_failures = 0;
           synced_this_session = false;
           next_pub_us = esp_timer_get_time();
         } else {
@@ -351,14 +366,18 @@ void microrosTask(void*) {
         break;
 
       case AgentState::kConnected: {
-        // (a) Đồng bộ đồng hồ: thử lại nhanh tới khi thành công, sau đó định kỳ
-        const uint32_t sync_period = synced_this_session ? TIME_SYNC_PERIOD_MS : kTimeSyncRetryMs;
-        if (now_ms - last_sync_ms >= sync_period) {
+        // (a) Đồng bộ đồng hồ (kiêm kiểm tra phiên): định kỳ khi ổn, thử lại mỗi giây khi lỗi
+        const bool healthy = synced_this_session && sync_failures == 0;
+        if (now_ms - last_sync_ms >= (healthy ? TIME_SYNC_PERIOD_MS : kTimeSyncRetryMs)) {
           last_sync_ms = now_ms;
           if (syncTime()) {
             if (!synced_this_session) APP_LOG("UROS", "Dong bo thoi gian voi agent OK");
             synced_this_session = true;
-            shared::markLinkAlive();
+            sync_failures = 0;
+          } else if (++sync_failures >= kMaxTimeSyncFailures) {
+            APP_LOG("UROS", "Phien micro-ROS khong phan hoi (agent khoi dong lai?) -> tao lai");
+            state = AgentState::kDestroying;
+            break;
           }
         }
 
@@ -378,23 +397,19 @@ void microrosTask(void*) {
           // Không gửi lại cùng một mẫu (tf2 cảnh báo TF_REPEATED_DATA)
           if (shared::rosTimeValid() && s.seq != 0 && s.seq != last_pub_seq) {
             last_pub_seq = s.seq;
-            if (publishState(s)) {
-              last_pub_ok_ms = millis();
-              shared::markLinkAlive();
-            }
+            publishState(s);
           }
         }
 
-        // (d) Nhịp tim: ping agent khi lâu không có bằng chứng liên lạc
+        // (d) Nhịp tim: ping agent khi quá lâu không nhận gói nào (pong cũng làm mới nhịp tim)
         const uint32_t t = millis();
         if (shared::msSinceLinkAlive() >= kPingPeriodMs && t - last_ping_ms >= kPingPeriodMs) {
           last_ping_ms = t;
-          if (rmw_uros_ping_agent(kPingTimeoutMs, 1) == RMW_RET_OK) shared::markLinkAlive();
+          ignoreResult(rmw_uros_ping_agent(kPingTimeoutMs, 1));
         }
 
-        // (e) Mất agent, hoặc agent khởi động lại (ping được nhưng phiên cũ đã chết)
-        const uint32_t since_alive = shared::msSinceLinkAlive();
-        if (since_alive > kAgentLostMs || millis() - last_pub_ok_ms > kSessionDeadMs) {
+        // (e) Agent im lặng quá lâu (mất Wi-Fi / tắt agent) -> tạo lại phiên khi agent trở lại
+        if (shared::msSinceLinkAlive() > kAgentLostMs) {
           APP_LOG("UROS", "Mat lien lac voi agent -> tao lai phien");
           state = AgentState::kDestroying;
         }

@@ -7,6 +7,7 @@
 
 #include "amr_diff_drive.h"
 #include "amr_pid.h"
+#include "amr_quadrature.h"
 #include "app_log.h"
 #include "encoders.h"
 #include "motor_driver.h"
@@ -27,9 +28,9 @@ namespace control {
 namespace {
 
 constexpr uint32_t kPeriodMs = 1000 / CONTROL_LOOP_HZ;
-constexpr double kRadPerTick = 2.0 * M_PI / static_cast<double>(ENCODER_TICKS_PER_REV);
-constexpr float kCmdEpsilon = 1e-4f;   // |lệnh| nhỏ hơn -> coi là lệnh dừng
-constexpr float kStoppedSpeed = 0.3f;  // rad/s: bánh coi như đứng yên
+constexpr float kCmdEpsilon = 1e-4f;     // |lệnh| nhỏ hơn -> coi là lệnh dừng
+constexpr float kMinWheelTarget = 0.1f;  // rad/s (~3 mm/s): nhỏ hơn -> 0, tránh motor ù/rung
+constexpr float kStoppedSpeed = 0.3f;    // rad/s: bánh coi như đứng yên
 
 // Phát hiện lỗi động cơ (DRIVE_FAULT_DETECTION)
 constexpr float kFaultDuty = 0.9f * MOTOR_MAX_DUTY;               // duty coi là bão hoà
@@ -38,7 +39,7 @@ constexpr uint32_t kRunawayMs = 300;
 constexpr float kStallSpeed = 0.5f;                               // gần như không quay
 constexpr uint32_t kStallMs = 1000;
 
-constexpr uint32_t kTaskStackBytes = 4096;
+constexpr uint32_t kTaskStackBytes = 6144;
 
 MotorDriverTB6612 g_motors;
 QuadratureEncoder g_encoders[2];
@@ -94,12 +95,10 @@ void controlTask(void*) {
     double d_rad[2];
     for (int i = 0; i < 2; ++i) {
       const int32_t ticks = g_encoders[i].count();
-      // Hiệu số không dấu: đúng cả khi bộ đếm 32 bit bị tràn
-      const int32_t d = static_cast<int32_t>(static_cast<uint32_t>(ticks) -
-                                             static_cast<uint32_t>(prev_ticks[i]));
+      const int32_t d = amr::quad::tickDelta(ticks, prev_ticks[i]);  // đúng cả khi tràn 32 bit
       prev_ticks[i] = ticks;
       total_ticks[i] += d;
-      d_rad[i] = static_cast<double>(d) * kRadPerTick;
+      d_rad[i] = amr::quad::ticksToRadians(d, ENCODER_TICKS_PER_REV);
       const float raw_vel = static_cast<float>(d_rad[i]) / dt;
       vel[i] += WHEEL_VEL_FILTER_ALPHA * (raw_vel - vel[i]);
     }
@@ -145,6 +144,8 @@ void controlTask(void*) {
       const float v = clampf(cmd.linear, -MAX_LINEAR_VEL_MPS, MAX_LINEAR_VEL_MPS);
       const float w = clampf(cmd.angular, -MAX_ANGULAR_VEL_RAD_S, MAX_ANGULAR_VEL_RAD_S);
       target = amr::limitWheelSpeeds(kin.toWheelSpeeds(v, w), MAX_WHEEL_SPEED_RAD_S);
+      if (std::fabs(target.left) < kMinWheelTarget) target.left = 0.0f;
+      if (std::fabs(target.right) < kMinWheelTarget) target.right = 0.0f;
     }
     const float target_arr[2] = {target.left, target.right};
 
@@ -215,7 +216,7 @@ void controlTask(void*) {
     sample.linear = twist.linear;
     sample.angular = twist.angular;
     for (int i = 0; i < 2; ++i) {
-      sample.wheel_pos_rad[i] = static_cast<double>(total_ticks[i]) * kRadPerTick;
+      sample.wheel_pos_rad[i] = amr::quad::ticksToRadians(total_ticks[i], ENCODER_TICKS_PER_REV);
       sample.wheel_vel_rad_s[i] = vel[i];
       sample.wheel_target_rad_s[i] = target_arr[i];
       sample.duty[i] = duty[i];

@@ -136,10 +136,17 @@ ros2 topic hz /odom
 ```
 
 ```bash
-ros2 run teleop_twist_keyboard teleop_twist_keyboard
+ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p speed:=0.15 -p turn:=0.8
 ```
 
 > Firmware dừng xe nếu không có `/cmd_vel` mới trong 500 ms: với teleop bàn phím hãy giữ phím.
+
+Hiệu chỉnh bán kính bánh / khoảng cách 2 bánh từ `/odom` (đi thẳng rồi nhập quãng đường đo bằng
+thước, hoặc quay tại chỗ rồi nhập số vòng thật — chi tiết ở README gốc, Bước 2.5):
+
+```bash
+ros2 run amr_bringup calibrate_odom
+```
 
 ### 3. Quét bản đồ 2D (slam_toolbox)
 
@@ -213,10 +220,13 @@ ros2 launch amr_bringup navigation.launch.py slam:=true
 colcon test && colcon test-result --verbose
 ```
 
-30 test: cây TF/kích thước/quán tính của URDF, giải mã gói LiDAR (fixture tạo bằng chính bộ
-đóng gói C++ của firmware), node bridge nhận UDP thật → `/scan`, flake8/pep257, tham số
-Nav2/SLAM, và đối chiếu chéo với `firmware_esp32` (bán kính & khoảng cách bánh, tên joint, frame,
-cổng UDP, giới hạn vận tốc).
+76 test:
+
+| Package | Test |
+|---|---|
+| `amr_lidar_bridge` (38) | giải mã gói LiDAR "AMRL" (fixture do bộ đóng gói C++ của firmware tạo, gói "vàng" mà firmware cũng giải mã, fuzz, mọi kiểu gói hỏng/cắt cụt), chuyển sang `LaserScan` và chọn stamp, node bridge nhận UDP thật → `/scan`, flake8, pep257 |
+| `amr_description` (7) | cây TF, kích thước, quán tính, mỗi link một màu |
+| `amr_bringup` (31) | launch file nạp được và không rò tham số, tham số Nav2/SLAM, footprint; **tên topic/frame thống nhất** giữa firmware ↔ URDF ↔ bridge ↔ slam_toolbox ↔ Nav2 ↔ RViz; thông số khớp firmware (bán kính & khoảng cách bánh, joint, cổng UDP, giới hạn vận tốc); toán của `calibrate_odom` |
 
 ## Xử lý sự cố
 

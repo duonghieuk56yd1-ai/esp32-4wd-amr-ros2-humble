@@ -24,6 +24,54 @@ from amr_lidar_bridge.packet import decode, PacketError, ScanPacket
 NS_PER_S = 1_000_000_000
 
 
+def select_stamp_ns(now_ns: int, packet: ScanPacket, use_device_stamp: bool,
+                    max_stamp_skew: float, time_offset: float = 0.0):
+    """
+    Chọn thời điểm (ns) gắn vào LaserScan.
+
+    Dùng stamp ESP32 gửi kèm khi được phép, ESP32 đã đồng bộ đồng hồ với micro-ROS
+    agent (packet.ros_time) và stamp không lệch quá max_stamp_skew giây so với giờ
+    Laptop; ngược lại dùng giờ nhận gói now_ns. Luôn cộng thêm time_offset (s).
+
+    Trả về (stamp_ns, rejected_skew): rejected_skew là độ lệch (s) khi stamp ESP32
+    bị loại vì lệch quá nhiều, ngược lại None.
+    """
+    stamp_ns = now_ns
+    rejected_skew = None
+    if use_device_stamp and packet.ros_time:
+        skew = (now_ns - packet.stamp_ns) / NS_PER_S
+        if abs(skew) <= max_stamp_skew:
+            stamp_ns = packet.stamp_ns
+        else:
+            rejected_skew = skew
+    return stamp_ns + int(time_offset * NS_PER_S), rejected_skew
+
+
+def scan_to_msg(packet: ScanPacket, frame_id: str, stamp_ns: int,
+                range_min: float = -1.0, range_max: float = -1.0) -> LaserScan:
+    """
+    Chép một vòng quét đã giải mã sang sensor_msgs/msg/LaserScan.
+
+    Tia không có phản hồi thành +inf (REP-117). range_min/range_max > 0 ghi đè giá
+    trị ESP32 gửi kèm.
+    """
+    msg = LaserScan()
+    msg.header.stamp = Time(sec=stamp_ns // NS_PER_S, nanosec=stamp_ns % NS_PER_S)
+    msg.header.frame_id = frame_id
+    msg.angle_min = packet.angle_min
+    msg.angle_max = packet.angle_max
+    msg.angle_increment = packet.angle_increment
+    msg.time_increment = 0.0
+    msg.scan_time = packet.scan_time
+    msg.range_min = range_min if range_min > 0.0 else packet.range_min
+    msg.range_max = range_max if range_max > 0.0 else packet.range_max
+    msg.ranges = array('f', packet.ranges_m())
+    if packet.intensities is not None:
+        # list(): array('f', bytes) sẽ đọc bytes như float thô
+        msg.intensities = array('f', list(packet.intensities))
+    return msg
+
+
 class LidarUdpBridge(Node):
     """Cầu nối UDP -> sensor_msgs/LaserScan."""
 
@@ -107,32 +155,14 @@ class LidarUdpBridge(Node):
 
     def _publish(self, packet: ScanPacket, host: str):
         now_ns = self.get_clock().now().nanoseconds
-        stamp_ns = now_ns
-        if self.use_device_stamp and packet.ros_time:
-            skew = (now_ns - packet.stamp_ns) / NS_PER_S
-            if abs(skew) <= self.max_stamp_skew:
-                stamp_ns = packet.stamp_ns
-            else:
-                self.get_logger().warning(
-                    f'Stamp ESP32 lệch {skew:+.2f} s so với Laptop (> max_stamp_skew) '
-                    '-> dùng giờ nhận gói', throttle_duration_sec=10.0)
-        stamp_ns += int(self.time_offset * NS_PER_S)
-
-        msg = LaserScan()
-        msg.header.stamp = Time(sec=stamp_ns // NS_PER_S, nanosec=stamp_ns % NS_PER_S)
-        msg.header.frame_id = self.frame_id
-        msg.angle_min = packet.angle_min
-        msg.angle_max = packet.angle_max
-        msg.angle_increment = packet.angle_increment
-        msg.time_increment = 0.0
-        msg.scan_time = packet.scan_time
-        msg.range_min = self.range_min if self.range_min > 0.0 else packet.range_min
-        msg.range_max = self.range_max if self.range_max > 0.0 else packet.range_max
-        msg.ranges = array('f', packet.ranges_m())
-        if packet.intensities is not None:
-            # list(): array('f', bytes) sẽ đọc bytes như float thô
-            msg.intensities = array('f', list(packet.intensities))
-        self.publisher.publish(msg)
+        stamp_ns, rejected_skew = select_stamp_ns(
+            now_ns, packet, self.use_device_stamp, self.max_stamp_skew, self.time_offset)
+        if rejected_skew is not None:
+            self.get_logger().warning(
+                f'Stamp ESP32 lệch {rejected_skew:+.2f} s so với Laptop (> max_stamp_skew) '
+                '-> dùng giờ nhận gói', throttle_duration_sec=10.0)
+        self.publisher.publish(
+            scan_to_msg(packet, self.frame_id, stamp_ns, self.range_min, self.range_max))
 
         with self._lock:
             first = self._source is None

@@ -86,7 +86,8 @@ def decode(buf: bytes) -> ScanPacket:
     expected = HEADER.size + 2 * num_ranges + (num_ranges if has_intensity else 0)
     if len(buf) != expected:
         raise PacketError(f'độ dài {len(buf)} byte, cần {expected} byte cho {num_ranges} tia')
-    if num_ranges == 0 or not (angle_increment > 0.0) or not math.isfinite(angle_min):
+    if (num_ranges == 0 or not (angle_increment > 0.0) or not math.isfinite(angle_increment)
+            or not math.isfinite(angle_min)):
         raise PacketError('thông tin góc không hợp lệ')
 
     end = HEADER.size + 2 * num_ranges

@@ -64,8 +64,8 @@ CmdVelSample cmdVel();
 void setRobotState(const RobotStateSample& state);
 RobotStateSample robotState();
 
-// Link watchdog: "bằng chứng" Laptop còn liên lạc được (ping agent thành công,
-// publish reliable được xác nhận, hoặc nhận /cmd_vel).
+// Link watchdog: "bằng chứng" Laptop còn liên lạc được = MỌI gói UDP nhận từ
+// micro-ROS agent (ACK của gói reliable, trả lời ping/đồng bộ giờ, /cmd_vel).
 void markLinkAlive();
 void markLinkDown();             // chắc chắn mất (Wi-Fi rớt, mất agent)
 uint32_t msSinceLinkAlive();     // UINT32_MAX nếu đang down / chưa từng lên

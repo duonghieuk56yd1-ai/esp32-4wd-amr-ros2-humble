@@ -1,0 +1,93 @@
+# Kiểm tra tự động mỗi lần push / pull request:
+#   * firmware : unit test thuật toán (pio test -e native) + build firmware ESP32 (pio run)
+#   * ros2     : đúng các bước trong README trên Ubuntu 22.04 + ROS 2 Humble
+#                (vcs import micro-ROS agent, rosdep, colcon build, colcon test)
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    name: Firmware ESP32 (PlatformIO)
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: firmware_esp32
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO toolchain & thư viện micro-ROS đã build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/packages
+            ~/.platformio/platforms
+            ~/.platformio/.cache
+            firmware_esp32/.pio/libdeps
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware_esp32/platformio.ini', 'firmware_esp32/extra_packages/**') }}
+
+      # micro_ros_platformio cần PlatformIO nằm trong ~/.platformio/penv
+      # (giống bộ cài get-platformio.py và extension PlatformIO IDE của VS Code).
+      - name: Cài PlatformIO Core
+        run: |
+          python -m venv ~/.platformio/penv
+          ~/.platformio/penv/bin/pip install --upgrade pip platformio
+          echo "$HOME/.platformio/penv/bin" >> "$GITHUB_PATH"
+
+      - name: Unit test (động học, PID, encoder, gói LiDAR) — pio test -e native
+        run: pio test -e native
+
+      - name: Build firmware — pio run -e esp32dev
+        run: |
+          pio pkg install -e esp32dev
+          # Phụ thuộc Python của esptool (intelhex...), phòng khi postinstall chưa chạy
+          if [ -f ~/.platformio/packages/tool-esptoolpy/package-postinstall.py ]; then
+            (cd ~/.platformio/packages/tool-esptoolpy && ~/.platformio/penv/bin/python package-postinstall.py)
+          fi
+          pio run -e esp32dev
+
+  ros2:
+    name: ROS 2 Humble workspace (colcon)
+    runs-on: ubuntu-22.04
+    container: ros:humble-ros-base
+    defaults:
+      run:
+        shell: bash
+        working-directory: ros2_ws
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lấy mã nguồn micro-ROS agent (vcs import)
+        run: vcs import src < micro_ros_agent.repos
+
+      - name: Cài phụ thuộc (rosdep)
+        run: |
+          apt-get update
+          rosdep update --rosdistro humble
+          rosdep install --from-paths src --ignore-src -y --rosdistro humble
+
+      - name: colcon build
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --symlink-install --event-handlers console_cohesion+
+
+      - name: colcon test
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon test --packages-select amr_description amr_lidar_bridge amr_bringup \
+            --event-handlers console_direct+
+          colcon test-result --verbose

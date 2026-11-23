@@ -49,21 +49,20 @@ float PidController::update(float setpoint, float measurement, float dt) {
   prev_measurement_ = measurement;
   has_prev_ = true;
 
-  // I với anti-windup
-  const float i_candidate =
-      clampf(i_term_ + gains_.ki * error * dt, -limits_.integral, limits_.integral);
-
-  float unsaturated = p_term + i_candidate + d_term;
-  const bool pushing_high = unsaturated > limits_.output && error > 0.0f;
-  const bool pushing_low = unsaturated < -limits_.output && error < 0.0f;
-  if (pushing_high || pushing_low) {
-    // Đã bão hoà và sai số còn đẩy thêm: giữ nguyên I (không tích luỹ).
-    unsaturated = p_term + i_term_ + d_term;
-  } else {
-    i_term_ = i_candidate;
+  // I với anti-windup: khi sai số còn đẩy đầu ra vào bão hoà, chỉ tích phân tới
+  // đúng mức đầu ra vừa chạm giới hạn (đầu ra đạt 100 % duty) rồi dừng; không
+  // tích luỹ vượt mức đó và cũng không tự xả phần I đã có.
+  const float pd = p_term + d_term;
+  float i_next = clampf(i_term_ + gains_.ki * error * dt, -limits_.integral, limits_.integral);
+  if (pd + i_next > limits_.output && error > 0.0f) {
+    i_next = std::fmax(i_term_, std::fmin(i_next, limits_.output - pd));
+  } else if (pd + i_next < -limits_.output && error < 0.0f) {
+    i_next = std::fmin(i_term_, std::fmax(i_next, -limits_.output - pd));
   }
+  i_term_ = i_next;
 
-  saturated_ = unsaturated > limits_.output || unsaturated < -limits_.output;
+  const float unsaturated = pd + i_term_;
+  saturated_ = std::fabs(unsaturated) >= limits_.output;
   output_ = clampf(unsaturated, -limits_.output, limits_.output);
   return output_;
 }

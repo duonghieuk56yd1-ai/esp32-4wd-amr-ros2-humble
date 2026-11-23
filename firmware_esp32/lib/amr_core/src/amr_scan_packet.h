@@ -127,6 +127,7 @@ struct ScanPacketView {
   uint16_t rangeMm(uint16_t i) const;
 };
 
+// Trả về false nếu sai magic/version/độ dài, 0 tia hoặc thông tin góc không hợp lệ.
 bool decodeScanPacket(const uint8_t* buf, size_t len, ScanPacketView& out);
 
 }  // namespace amr
