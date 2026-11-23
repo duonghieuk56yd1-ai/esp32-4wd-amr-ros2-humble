@@ -1,0 +1,341 @@
+<?xml version="1.0"?>
+<!--
+  amr_3wd.urdf.xacro — Robot vi sai 3 bánh: 2 bánh chủ động phía sau (có encoder),
+  1 bánh mắt trâu phía trước và LiDAR trên nóc.
+
+  Cây TF:
+    base_footprint            (trên mặt đất, ngay dưới tâm trục 2 bánh chủ động)
+    └── base_link             (tâm trục 2 bánh chủ động = tâm quay của robot)
+        ├── left_wheel_link   (continuous, trục +Y: góc dương = bánh lăn về phía trước)
+        │   └── left_wheel_marker_link   (fixed, vạch vàng quay theo bánh)
+        ├── right_wheel_link  (continuous, trục +Y)
+        │   └── right_wheel_marker_link
+        ├── caster_wheel_link (fixed, quả cầu chạm đất)
+        └── laser_frame       (fixed, gốc = tâm mặt phẳng quét, cao lidar_height so với đất)
+            └── laser_mount_link         (fixed, đế + nắp đen của LiDAR)
+
+  Các link *_marker_link / laser_mount_link chỉ để tô màu: RViz2 (Humble) dùng
+  material của <visual> ĐẦU TIÊN cho mọi visual trong một link, nên mỗi màu cần
+  một link riêng.
+
+  Khớp với firmware_esp32: joint left_wheel_joint / right_wheel_joint,
+  wheel_radius = WHEEL_RADIUS_M, wheel_separation = WHEEL_SEPARATION_M.
+
+  Ghi đè tham số khi chạy xacro, ví dụ:
+    xacro amr_3wd.urdf.xacro wheel_separation:=0.185 lidar_height:=0.15
+-->
+<robot name="amr_3wd" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ===================== Tham số có thể ghi đè (xacro:arg) ===================== -->
+  <xacro:arg name="wheel_radius" default="0.0325"/>     <!-- bán kính bánh chủ động (m) -->
+  <xacro:arg name="wheel_separation" default="0.18"/>   <!-- khoảng cách tâm 2 bánh (m) -->
+  <xacro:arg name="lidar_height" default="0.14"/>       <!-- độ cao mặt phẳng quét so với đất (m) -->
+  <xacro:arg name="lidar_x" default="0.06"/>            <!-- vị trí LiDAR phía trước trục bánh (m) -->
+  <xacro:arg name="lidar_yaw" default="0.0"/>           <!-- góc lắp LiDAR (rad); firmware đã bù LIDAR_YAW_OFFSET_DEG -->
+
+  <!-- ===================== Thân xe: hộp bo góc 22 x 18 x 7 cm ===================== -->
+  <xacro:property name="chassis_length" value="0.22"/>
+  <xacro:property name="chassis_width" value="0.18"/>
+  <xacro:property name="chassis_height" value="0.07"/>
+  <xacro:property name="chassis_corner_radius" value="0.02"/>
+  <xacro:property name="chassis_clearance" value="0.015"/>  <!-- khoảng sáng gầm -->
+  <xacro:property name="chassis_x_offset" value="0.06"/>    <!-- tâm thân xe nằm trước trục bánh -->
+  <xacro:property name="chassis_mass" value="0.90"/>        <!-- gồm motor, pin, mạch -->
+
+  <!-- ===================== Bánh chủ động ===================== -->
+  <xacro:property name="wheel_radius" value="$(arg wheel_radius)"/>
+  <xacro:property name="wheel_separation" value="$(arg wheel_separation)"/>
+  <xacro:property name="wheel_width" value="0.026"/>
+  <xacro:property name="wheel_mass" value="0.05"/>
+
+  <!-- ===================== Bánh mắt trâu (caster) ===================== -->
+  <xacro:property name="caster_radius" value="0.0125"/>
+  <xacro:property name="caster_x" value="0.14"/>            <!-- phía trước trục bánh -->
+  <xacro:property name="caster_mass" value="0.03"/>
+
+  <!-- ===================== LiDAR (đế đen + đầu quét đỏ) ===================== -->
+  <xacro:property name="lidar_height" value="$(arg lidar_height)"/>
+  <xacro:property name="lidar_x" value="$(arg lidar_x)"/>
+  <xacro:property name="lidar_yaw" value="$(arg lidar_yaw)"/>
+  <xacro:property name="lidar_base_radius" value="0.035"/>
+  <xacro:property name="lidar_head_radius" value="0.030"/>
+  <xacro:property name="lidar_head_height" value="0.025"/>
+  <xacro:property name="lidar_mass" value="0.19"/>
+
+  <!-- ===================== Giá trị dẫn xuất (so với base_link) ===================== -->
+  <xacro:property name="chassis_bottom_z" value="${chassis_clearance - wheel_radius}"/>
+  <xacro:property name="chassis_center_z" value="${chassis_bottom_z + chassis_height / 2}"/>
+  <xacro:property name="chassis_top_z" value="${chassis_bottom_z + chassis_height}"/>
+  <xacro:property name="laser_z" value="${lidar_height - wheel_radius}"/>
+  <xacro:property name="lidar_base_height" value="${laser_z - lidar_head_height / 2 - chassis_top_z}"/>
+
+  <!-- Báo lỗi rõ ràng nếu LiDAR đặt thấp hơn nóc xe -->
+  <xacro:if value="${lidar_base_height &lt;= 0.0}">
+    <xacro:ERROR_lidar_height_phai_cao_hon_noc_xe/>
+  </xacro:if>
+
+  <!-- ===================== Màu ===================== -->
+  <material name="amr_blue"><color rgba="0.10 0.35 0.85 1.0"/></material>
+  <material name="amr_black"><color rgba="0.05 0.05 0.05 1.0"/></material>
+  <material name="amr_silver"><color rgba="0.78 0.78 0.80 1.0"/></material>
+  <material name="amr_red"><color rgba="0.85 0.10 0.10 1.0"/></material>
+  <material name="amr_marker"><color rgba="1.00 0.85 0.00 1.0"/></material>
+
+  <!-- ===================== Macro quán tính ===================== -->
+  <xacro:macro name="box_inertial" params="m x y z *origin">
+    <inertial>
+      <xacro:insert_block name="origin"/>
+      <mass value="${m}"/>
+      <inertia ixx="${m * (y * y + z * z) / 12}" ixy="0" ixz="0"
+               iyy="${m * (x * x + z * z) / 12}" iyz="0"
+               izz="${m * (x * x + y * y) / 12}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Trụ đặc, trục trụ theo trục z của origin -->
+  <xacro:macro name="cylinder_inertial" params="m r h *origin">
+    <inertial>
+      <xacro:insert_block name="origin"/>
+      <mass value="${m}"/>
+      <inertia ixx="${m * (3 * r * r + h * h) / 12}" ixy="0" ixz="0"
+               iyy="${m * (3 * r * r + h * h) / 12}" iyz="0"
+               izz="${m * r * r / 2}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="sphere_inertial" params="m r *origin">
+    <inertial>
+      <xacro:insert_block name="origin"/>
+      <mass value="${m}"/>
+      <inertia ixx="${2 * m * r * r / 5}" ixy="0" ixz="0"
+               iyy="${2 * m * r * r / 5}" iyz="0"
+               izz="${2 * m * r * r / 5}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- ===================== base_footprint -> base_link ===================== -->
+  <link name="base_footprint"/>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Trụ đứng ở 4 góc tạo phần bo tròn của thân xe -->
+  <xacro:macro name="chassis_corner" params="sx sy">
+    <visual>
+      <origin xyz="${chassis_x_offset + sx * (chassis_length / 2 - chassis_corner_radius)}
+                   ${sy * (chassis_width / 2 - chassis_corner_radius)} ${chassis_center_z}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${chassis_corner_radius}" length="${chassis_height}"/>
+      </geometry>
+      <material name="amr_blue"/>
+    </visual>
+  </xacro:macro>
+
+  <link name="base_link">
+    <!-- Thân hộp bo góc = 2 hộp chữ thập + 4 trụ ở góc -->
+    <visual>
+      <origin xyz="${chassis_x_offset} 0 ${chassis_center_z}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length - 2 * chassis_corner_radius} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+      <material name="amr_blue"/>
+    </visual>
+    <visual>
+      <origin xyz="${chassis_x_offset} 0 ${chassis_center_z}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width - 2 * chassis_corner_radius} ${chassis_height}"/>
+      </geometry>
+      <material name="amr_blue"/>
+    </visual>
+    <xacro:chassis_corner sx="1" sy="1"/>
+    <xacro:chassis_corner sx="1" sy="-1"/>
+    <xacro:chassis_corner sx="-1" sy="1"/>
+    <xacro:chassis_corner sx="-1" sy="-1"/>
+
+    <collision>
+      <origin xyz="${chassis_x_offset} 0 ${chassis_center_z}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+    </collision>
+
+    <xacro:box_inertial m="${chassis_mass}" x="${chassis_length}" y="${chassis_width}" z="${chassis_height}">
+      <origin xyz="${chassis_x_offset} 0 ${chassis_center_z}" rpy="0 0 0"/>
+    </xacro:box_inertial>
+  </link>
+
+  <!-- ===================== Bánh chủ động (continuous) ===================== -->
+  <!-- reflect = +1: bánh trái (+y), -1: bánh phải (-y); mặt ngoài bánh hướng theo reflect -->
+  <xacro:macro name="drive_wheel" params="side reflect">
+    <link name="${side}_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi / 2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="amr_black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi / 2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+      </collision>
+      <xacro:cylinder_inertial m="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}">
+        <origin xyz="0 0 0" rpy="${pi / 2} 0 0"/>
+      </xacro:cylinder_inertial>
+    </link>
+
+    <joint name="${side}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${side}_wheel_link"/>
+      <origin xyz="0 ${reflect * wheel_separation / 2} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <dynamics damping="0.01" friction="0.0"/>
+    </joint>
+
+    <!-- Moay-ơ + vạch vàng hướng kính ở mặt ngoài: quay theo bánh -> thấy góc quay trong RViz -->
+    <link name="${side}_wheel_marker_link">
+      <visual>
+        <origin xyz="0 ${reflect * (wheel_width / 2 + 0.0015)} ${wheel_radius * 0.5}" rpy="0 0 0"/>
+        <geometry>
+          <box size="${wheel_radius * 0.25} 0.003 ${wheel_radius * 0.85}"/>
+        </geometry>
+        <material name="amr_marker"/>
+      </visual>
+      <visual>
+        <origin xyz="0 ${reflect * (wheel_width / 2 + 0.001)} 0" rpy="${pi / 2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius * 0.3}" length="0.002"/>
+        </geometry>
+        <material name="amr_marker"/>
+      </visual>
+      <collision>
+        <origin xyz="0 ${reflect * (wheel_width / 2 + 0.0015)} ${wheel_radius * 0.5}" rpy="0 0 0"/>
+        <geometry>
+          <box size="${wheel_radius * 0.25} 0.003 ${wheel_radius * 0.85}"/>
+        </geometry>
+      </collision>
+      <xacro:box_inertial m="0.002" x="${wheel_radius * 0.25}" y="0.003" z="${wheel_radius * 0.85}">
+        <origin xyz="0 ${reflect * (wheel_width / 2 + 0.0015)} ${wheel_radius * 0.5}" rpy="0 0 0"/>
+      </xacro:box_inertial>
+    </link>
+
+    <joint name="${side}_wheel_marker_joint" type="fixed">
+      <parent link="${side}_wheel_link"/>
+      <child link="${side}_wheel_marker_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:drive_wheel side="left" reflect="1"/>
+  <xacro:drive_wheel side="right" reflect="-1"/>
+
+  <!-- ===================== Bánh mắt trâu (fixed, chạm đất) ===================== -->
+  <link name="caster_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+      <material name="amr_silver"/>
+    </visual>
+    <!-- Vỏ giữ bi, gắn vào đáy thân xe (cùng màu bạc: 1 material / link) -->
+    <visual>
+      <origin xyz="0 0 ${caster_radius / 2}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${caster_radius * 1.2}" length="${caster_radius}"/>
+      </geometry>
+      <material name="amr_silver"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+    </collision>
+
+    <xacro:sphere_inertial m="${caster_mass}" r="${caster_radius}">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:sphere_inertial>
+  </link>
+
+  <joint name="caster_wheel_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="caster_wheel_link"/>
+    <!-- tâm quả cầu cao đúng caster_radius so với mặt đất -->
+    <origin xyz="${caster_x} 0 ${caster_radius - wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ===================== LiDAR: gốc laser_frame = tâm mặt phẳng quét ===================== -->
+  <!-- Đầu quét màu đỏ, tâm trùng mặt phẳng quét -->
+  <link name="laser_frame">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${lidar_head_radius}" length="${lidar_head_height}"/>
+      </geometry>
+      <material name="amr_red"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${lidar_head_radius}" length="${lidar_head_height}"/>
+      </geometry>
+    </collision>
+    <xacro:cylinder_inertial m="${lidar_mass * 0.4}" r="${lidar_head_radius}" h="${lidar_head_height}">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:cylinder_inertial>
+  </link>
+
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_frame"/>
+    <origin xyz="${lidar_x} 0 ${laser_z}" rpy="0 0 ${lidar_yaw}"/>
+  </joint>
+
+  <!-- Đế đen (từ nóc xe lên tới đầu quét) + nắp đen + mũi chỉ hướng 0 độ (+x) của scan -->
+  <link name="laser_mount_link">
+    <visual>
+      <origin xyz="0 0 ${-lidar_head_height / 2 - lidar_base_height / 2}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${lidar_base_radius}" length="${lidar_base_height}"/>
+      </geometry>
+      <material name="amr_black"/>
+    </visual>
+    <visual>
+      <origin xyz="0 0 ${lidar_head_height / 2 + 0.002}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${lidar_head_radius * 0.6}" length="0.004"/>
+      </geometry>
+      <material name="amr_black"/>
+    </visual>
+    <visual>
+      <origin xyz="${lidar_head_radius * 0.7} 0 ${lidar_head_height / 2 + 0.002}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${lidar_head_radius * 0.6} 0.008 0.004"/>
+      </geometry>
+      <material name="amr_black"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${-lidar_head_height / 2 - lidar_base_height / 2}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${lidar_base_radius}" length="${lidar_base_height}"/>
+      </geometry>
+    </collision>
+    <xacro:cylinder_inertial m="${lidar_mass * 0.6}" r="${lidar_base_radius}" h="${lidar_base_height}">
+      <origin xyz="0 0 ${-lidar_head_height / 2 - lidar_base_height / 2}" rpy="0 0 0"/>
+    </xacro:cylinder_inertial>
+  </link>
+
+  <joint name="laser_mount_joint" type="fixed">
+    <parent link="laser_frame"/>
+    <child link="laser_mount_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+</robot>

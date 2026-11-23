@@ -1,0 +1,11 @@
+# micro-ROS agent (chưa có gói apt cho Humble) — build từ source cùng workspace:
+#   cd ros2_ws && vcs import src < micro_ros_agent.repos
+repositories:
+  micro_ros/micro-ROS-Agent:
+    type: git
+    url: https://github.com/micro-ROS/micro-ROS-Agent.git
+    version: humble
+  micro_ros/micro_ros_msgs:
+    type: git
+    url: https://github.com/micro-ROS/micro_ros_msgs.git
+    version: humble
