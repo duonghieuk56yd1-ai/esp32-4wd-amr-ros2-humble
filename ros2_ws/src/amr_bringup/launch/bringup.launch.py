@@ -113,6 +113,8 @@ def generate_launch_description():
                               description='Cổng UDP nhận gói LiDAR (LIDAR_UDP_PORT của ESP32)'),
         DeclareLaunchArgument('rviz', default_value='true', description='Mở RViz2'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('use_meshes', default_value='false',
+                              description='true: hình 3D từ amr_description/meshes (FreeCAD)'),
 
         OpaqueFunction(function=_micro_ros_agent),
 
@@ -139,6 +141,7 @@ def generate_launch_description():
                     'rviz': LaunchConfiguration('rviz'),
                     'preview': 'false',
                     'use_sim_time': use_sim_time,
+                    'use_meshes': LaunchConfiguration('use_meshes'),
                 }.items()),
         ]),
     ])

@@ -52,6 +52,13 @@ odom                              (ESP32 /tf, 30 Hz)
 xacro src/amr_description/urdf/amr_3wd.urdf.xacro lidar_height:=0.15 > /tmp/amr.urdf
 ```
 
+**Hình vẽ từ FreeCAD:** xuất `chassis.stl`, `wheel.stl`, `lidar.stl` vào
+`src/amr_description/meshes/`, rồi chạy thêm `use_meshes:=true` (với `display.launch.py`,
+`bringup.launch.py`, `slam.launch.py` hoặc `navigation.launch.py`). Chỉ phần hiển thị đổi sang mesh;
+khung toạ độ, khớp, va chạm và quán tính giữ nguyên. Thư mục đã có sẵn bộ STL mẫu. Hướng dẫn từng
+bước: [docs/FREECAD_URDF.md](docs/FREECAD_URDF.md). Kiểm tra STL:
+`python3 src/amr_description/scripts/stl_tool.py check src/amr_description/meshes/*.stl`.
+
 ## Cài đặt
 
 Cần Ubuntu 22.04 + [ROS 2 Humble](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html).
@@ -220,12 +227,12 @@ ros2 launch amr_bringup navigation.launch.py slam:=true
 colcon test && colcon test-result --verbose
 ```
 
-76 test:
+82 test:
 
 | Package | Test |
 |---|---|
 | `amr_lidar_bridge` (38) | giải mã gói LiDAR "AMRL" (fixture do bộ đóng gói C++ của firmware tạo, gói "vàng" mà firmware cũng giải mã, fuzz, mọi kiểu gói hỏng/cắt cụt), chuyển sang `LaserScan` và chọn stamp, node bridge nhận UDP thật → `/scan`, flake8, pep257 |
-| `amr_description` (7) | cây TF, kích thước, quán tính, mỗi link một màu |
+| `amr_description` (13) | cây TF, kích thước, quán tính, mỗi link một màu; chế độ `use_meshes` (chỉ đổi visual), STL đúng đơn vị/gốc toạ độ, bán kính bánh trong `wheel.stl` khớp URDF |
 | `amr_bringup` (31) | launch file nạp được và không rò tham số, tham số Nav2/SLAM, footprint; **tên topic/frame thống nhất** giữa firmware ↔ URDF ↔ bridge ↔ slam_toolbox ↔ Nav2 ↔ RViz; thông số khớp firmware (bán kính & khoảng cách bánh, joint, cổng UDP, giới hạn vận tốc); toán của `calibrate_odom` |
 
 ## Xử lý sự cố

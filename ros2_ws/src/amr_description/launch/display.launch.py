@@ -10,6 +10,10 @@ TF odom -> base_footprint và /scan đến từ ESP32 / amr_lidar_bridge.
 Xem mô hình khi chưa có robot (thêm thanh trượt quay bánh và TF odom tĩnh):
 
     ros2 launch amr_description display.launch.py preview:=true
+
+Dùng hình vẽ từ FreeCAD (meshes/*.stl, xem ros2_ws/docs/FREECAD_URDF.md):
+
+    ros2 launch amr_description display.launch.py preview:=true use_meshes:=true
 """
 
 import os
@@ -31,9 +35,13 @@ def generate_launch_description():
     rviz_config = LaunchConfiguration('rviz_config')
     preview = LaunchConfiguration('preview')
     use_sim_time = LaunchConfiguration('use_sim_time')
+    use_meshes = LaunchConfiguration('use_meshes')
+    mesh_scale = LaunchConfiguration('mesh_scale')
 
     robot_description = ParameterValue(
-        Command([FindExecutable(name='xacro'), ' ', model]), value_type=str)
+        Command([FindExecutable(name='xacro'), ' ', model,
+                 ' use_meshes:=', use_meshes, ' mesh_scale:=', mesh_scale]),
+        value_type=str)
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -51,6 +59,12 @@ def generate_launch_description():
             description='true: không có robot -> joint_state_publisher_gui + TF odom tĩnh'),
         DeclareLaunchArgument(
             'use_sim_time', default_value='false', description='Dùng đồng hồ mô phỏng'),
+        DeclareLaunchArgument(
+            'use_meshes', default_value='false',
+            description='true: hình 3D lấy từ meshes/*.stl (vẽ bằng FreeCAD)'),
+        DeclareLaunchArgument(
+            'mesh_scale', default_value='0.001',
+            description='Hệ số đổi đơn vị STL ra mét (FreeCAD: mm -> 0.001)'),
 
         Node(
             package='robot_state_publisher',
