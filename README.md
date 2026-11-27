@@ -9,6 +9,11 @@ Tài liệu này đi theo đúng thứ tự làm việc: **mua linh kiện → �
 nạp firmware → Bước 1 → Bước 2 → Bước 3 → Bước 4**. Làm lần lượt, mỗi bước đều có cách kiểm tra
 "đã đúng chưa" trước khi sang bước sau.
 
+> **Mới có board ESP32 và laptop, chưa có linh kiện khác?** Bắt đầu với
+> [docs/GIAI_DOAN_1_ESP32_LAPTOP.md](docs/GIAI_DOAN_1_ESP32_LAPTOP.md): hướng dẫn từng bước có giải
+> thích (micro-ROS Agent là gì, đọc log Serial, kiểm tra topic, giả lập encoder bằng 2 sợi dây, thử
+> cơ chế an toàn).
+
 ## Mục lục
 
 0. [Tổng quan hệ thống](#0-tổng-quan-hệ-thống)
@@ -432,6 +437,9 @@ ros2 launch amr_description display.launch.py preview:=true
 RViz2 hiện xe xanh dương, 2 bánh đen, bánh mắt trâu bạc, LiDAR đỏ/đen trên nóc; kéo thanh trượt
 `left_wheel_joint` thấy bánh quay. Đóng lại bằng `Ctrl+C`.
 
+> Muốn xe trong RViz giống hệt xe thật? Vẽ thân, bánh và LiDAR bằng **FreeCAD**, xuất STL rồi thêm
+> `use_meshes:=true` vào mọi lệnh launch. Xem [ros2_ws/docs/FREECAD_URDF.md](ros2_ws/docs/FREECAD_URDF.md).
+
 **1.2. Bật robot** (kê 2 bánh khỏi mặt đất), chờ LED **nháy chậm** (đã có Wi-Fi).
 
 **1.3. Chạy toàn bộ phần Laptop** (micro-ROS agent UDP 8888 + LiDAR bridge UDP 8889 + URDF + RViz2):
@@ -680,7 +688,7 @@ cd ~/esp32-4wd-amr-ros2-humble/firmware_esp32 && pio test -e native
 | `test_scan_packet` | gom tia LiDAR (đổi chiều quay, bù góc, giữ điểm gần nhất), đóng gói/giải mã UDP, gói hỏng, gói do bộ mã hoá Python tạo ra |
 | `test_quadrature` | giải mã encoder x4, nảy cạnh, mất cạnh, bộ đếm tràn 32 bit |
 
-ROS 2 — 76 test (giải mã gói LiDAR UDP, node bridge, URDF, launch, tham số Nav2/SLAM, công cụ hiệu
+ROS 2 — 82 test (giải mã gói LiDAR UDP, node bridge, URDF, launch, tham số Nav2/SLAM, công cụ hiệu
 chỉnh odometry, **đối chiếu tên topic/frame và thông số giữa firmware ↔ URDF ↔ bridge ↔ SLAM ↔ Nav2 ↔
 RViz**, flake8/pep257):
 
@@ -706,7 +714,7 @@ esp32-4wd-amr-ros2-humble/
 │   ├── test/                       # 4 bộ unit test Unity
 │   └── README.md                   # chi tiết firmware, định dạng gói UDP, failsafe
 ├── ros2_ws/src/
-│   ├── amr_description/            # URDF/Xacro + RViz2 (robot_view.rviz)
+│   ├── amr_description/            # URDF/Xacro + RViz2 (robot_view.rviz) + meshes/ (STL từ FreeCAD)
 │   ├── amr_lidar_bridge/           # UDP 8889 → /scan
 │   └── amr_bringup/                # bringup · slam · navigation · calibrate_odom
 │   (ros2_ws/README.md: chi tiết launch, tham số Nav2/SLAM)
@@ -716,3 +724,4 @@ esp32-4wd-amr-ros2-humble/
 * [`firmware_esp32/README.md`](firmware_esp32/README.md) — kiến trúc firmware, định dạng gói LiDAR
   UDP, bảng failsafe, ghi chú kỹ thuật.
 * [`ros2_ws/README.md`](ros2_ws/README.md) — các launch file và tham số, cấu hình Nav2/slam_toolbox.
+* [`ros2_ws/docs/FREECAD_URDF.md`](ros2_ws/docs/FREECAD_URDF.md) — vẽ xe bằng FreeCAD, xuất STL, đưa vào URDF.

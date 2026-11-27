@@ -1,13 +1,15 @@
 """Kiểm tra URDF sinh từ amr_3wd.urdf.xacro: cây TF, kích thước và quán tính."""
 
+import importlib.util
 import os
 import xml.etree.ElementTree as ET
 
 import pytest
 import xacro
 
-XACRO_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), '..', 'urdf', 'amr_3wd.urdf.xacro')
+PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+XACRO_FILE = os.path.join(PKG_DIR, 'urdf', 'amr_3wd.urdf.xacro')
+MESH_DIR = os.path.join(PKG_DIR, 'meshes')
 
 
 def load(**mappings):
@@ -115,3 +117,98 @@ def test_one_material_per_link():
     for link in robot.findall('link'):
         materials = {v.find('material').get('name') for v in link.findall('visual')}
         assert len(materials) <= 1, (link.get('name'), materials)
+
+
+# ------------------------------------------------------------- mesh từ FreeCAD
+@pytest.fixture(scope='module')
+def stl_tool():
+    spec = importlib.util.spec_from_file_location(
+        'stl_tool', os.path.join(PKG_DIR, 'scripts', 'stl_tool.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def mesh_visuals(robot):
+    return {link.get('name'): link.find('visual/geometry/mesh')
+            for link in robot.findall('link') if link.find('visual/geometry/mesh') is not None}
+
+
+def test_default_model_uses_no_meshes():
+    assert mesh_visuals(load()) == {}
+
+
+def test_use_meshes_swaps_only_visuals():
+    plain, meshed = load(), load(use_meshes='true')
+    meshes = mesh_visuals(meshed)
+    assert {k: m.get('filename') for k, m in meshes.items()} == {
+        'base_link': 'package://amr_description/meshes/chassis.stl',
+        'left_wheel_link': 'package://amr_description/meshes/wheel.stl',
+        'right_wheel_link': 'package://amr_description/meshes/wheel.stl',
+        'laser_frame': 'package://amr_description/meshes/lidar.stl',
+    }
+    for mesh in meshes.values():
+        assert floats(mesh.get('scale')) == pytest.approx([0.001] * 3)
+    # mỗi link vẫn chỉ 1 visual dạng mesh; khớp, collision và quán tính giữ nguyên
+    for name in meshes:
+        link = next(lk for lk in meshed.findall('link') if lk.get('name') == name)
+        assert len(link.findall('visual')) == 1
+    assert ET.tostring(plain.find('joint')) == ET.tostring(meshed.find('joint'))
+    for tag in ('joint', 'link/collision', 'link/inertial'):
+        assert [ET.tostring(e) for e in plain.findall(tag)] == \
+            [ET.tostring(e) for e in meshed.findall(tag)], tag
+
+
+def test_chassis_mesh_sits_on_ground_and_right_wheel_is_mirrored():
+    robot = load(use_meshes='true', wheel_radius=0.04)
+    links = {lk.get('name'): lk for lk in robot.findall('link')}
+    chassis = links['base_link'].find('visual/origin')
+    # chassis.stl có gốc trên mặt đất: lệch xuống đúng bán kính bánh so với base_link
+    assert floats(chassis.get('xyz')) == pytest.approx([0.0, 0.0, -0.04])
+    left = floats(links['left_wheel_link'].find('visual/origin').get('rpy'))
+    right = floats(links['right_wheel_link'].find('visual/origin').get('rpy'))
+    assert left == pytest.approx([0.0, 0.0, 0.0])
+    assert right == pytest.approx([0.0, 0.0, 3.141592653589793])
+
+
+def test_mesh_scale_override():
+    for mesh in mesh_visuals(load(use_meshes='true', mesh_scale=1.0)).values():
+        assert floats(mesh.get('scale')) == pytest.approx([1.0] * 3)
+
+
+def test_shipped_meshes_follow_conventions(stl_tool):
+    """meshes/*.stl (mẫu hoặc vẽ bằng FreeCAD) phải đúng đơn vị mm và gốc toạ độ."""
+    robot = load()
+    links = {lk.get('name'): lk for lk in robot.findall('link')}
+    wheel_radius = float(links['left_wheel_link'].find('collision/geometry/cylinder')
+                         .get('radius'))
+    for name in ('chassis', 'wheel', 'lidar'):
+        info, warnings = stl_tool.check_mesh(os.path.join(MESH_DIR, f'{name}.stl'))
+        assert warnings == [], (name, warnings)
+        if name == 'wheel':
+            # bánh vẽ trong FreeCAD phải cùng bán kính với URDF / firmware (sai lệch < 1 mm)
+            assert info['wheel_radius_m'] == pytest.approx(wheel_radius, abs=0.001)
+
+
+def test_stl_tool_reads_ascii_and_flags_wrong_units(stl_tool, tmp_path):
+    tris = stl_tool.cylinder(32.5, 26.0, axis='y')
+    path = tmp_path / 'wheel.stl'
+    with open(path, 'w', encoding='ascii') as f:
+        f.write('solid w\n')
+        for tri in tris:
+            f.write(' facet normal 0 0 0\n  outer loop\n')
+            for v in tri:
+                f.write('   vertex %f %f %f\n' % v)
+            f.write('  endloop\n endfacet\n')
+        f.write('endsolid w\n')
+    info, warnings = stl_tool.check_mesh(str(path))
+    assert info['triangles'] == len(tris) and warnings == []
+    assert info['wheel_radius_m'] == pytest.approx(0.0325, abs=1e-6)
+    # cùng file nhưng khai báo STL theo mét -> 32 m: phải cảnh báo sai đơn vị
+    _, warnings = stl_tool.check_mesh(str(path), scale=1.0)
+    assert any('mesh_scale' in w for w in warnings)
+    # bánh đặt lệch gốc 5 mm -> cảnh báo gốc toạ độ
+    shifted = stl_tool.cylinder(32.5, 26.0, axis='y', center=(5.0, 0.0, 0.0))
+    stl_tool.write_stl(str(tmp_path / 'wheel_off.stl'), shifted)
+    _, warnings = stl_tool.check_mesh(str(tmp_path / 'wheel_off.stl'))
+    assert any('tâm bánh' in w for w in warnings)

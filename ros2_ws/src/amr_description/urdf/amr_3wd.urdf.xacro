@@ -23,6 +23,10 @@
 
   Ghi đè tham số khi chạy xacro, ví dụ:
     xacro amr_3wd.urdf.xacro wheel_separation:=0.185 lidar_height:=0.15
+
+  Dùng hình vẽ từ FreeCAD (STL trong meshes/, xem ros2_ws/docs/FREECAD_URDF.md):
+    xacro amr_3wd.urdf.xacro use_meshes:=true
+  Chỉ phần <visual> đổi sang mesh; <collision>/<inertial> vẫn là hình cơ bản (nhẹ, ổn định).
 -->
 <robot name="amr_3wd" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
@@ -32,6 +36,8 @@
   <xacro:arg name="lidar_height" default="0.14"/>       <!-- độ cao mặt phẳng quét so với đất (m) -->
   <xacro:arg name="lidar_x" default="0.06"/>            <!-- vị trí LiDAR phía trước trục bánh (m) -->
   <xacro:arg name="lidar_yaw" default="0.0"/>           <!-- góc lắp LiDAR (rad); firmware đã bù LIDAR_YAW_OFFSET_DEG -->
+  <xacro:arg name="use_meshes" default="false"/>        <!-- true: visual lấy từ meshes/*.stl (FreeCAD) -->
+  <xacro:arg name="mesh_scale" default="0.001"/>        <!-- FreeCAD xuất STL theo mm -> 0.001 đổi ra m -->
 
   <!-- ===================== Thân xe: hộp bo góc 22 x 18 x 7 cm ===================== -->
   <xacro:property name="chassis_length" value="0.22"/>
@@ -61,6 +67,11 @@
   <xacro:property name="lidar_head_radius" value="0.030"/>
   <xacro:property name="lidar_head_height" value="0.025"/>
   <xacro:property name="lidar_mass" value="0.19"/>
+
+  <!-- ===================== Mesh từ FreeCAD (quy ước gốc toạ độ: ros2_ws/docs/FREECAD_URDF.md) ===================== -->
+  <xacro:property name="use_meshes" value="$(arg use_meshes)"/>
+  <xacro:property name="mesh_scale" value="$(arg mesh_scale)"/>
+  <xacro:property name="mesh_dir" value="package://amr_description/meshes"/>
 
   <!-- ===================== Giá trị dẫn xuất (so với base_link) ===================== -->
   <xacro:property name="chassis_bottom_z" value="${chassis_clearance - wheel_radius}"/>
@@ -135,25 +146,37 @@
   </xacro:macro>
 
   <link name="base_link">
-    <!-- Thân hộp bo góc = 2 hộp chữ thập + 4 trụ ở góc -->
-    <visual>
-      <origin xyz="${chassis_x_offset} 0 ${chassis_center_z}" rpy="0 0 0"/>
-      <geometry>
-        <box size="${chassis_length - 2 * chassis_corner_radius} ${chassis_width} ${chassis_height}"/>
-      </geometry>
-      <material name="amr_blue"/>
-    </visual>
-    <visual>
-      <origin xyz="${chassis_x_offset} 0 ${chassis_center_z}" rpy="0 0 0"/>
-      <geometry>
-        <box size="${chassis_length} ${chassis_width - 2 * chassis_corner_radius} ${chassis_height}"/>
-      </geometry>
-      <material name="amr_blue"/>
-    </visual>
-    <xacro:chassis_corner sx="1" sy="1"/>
-    <xacro:chassis_corner sx="1" sy="-1"/>
-    <xacro:chassis_corner sx="-1" sy="1"/>
-    <xacro:chassis_corner sx="-1" sy="-1"/>
+    <xacro:unless value="${use_meshes}">
+      <!-- Thân hộp bo góc = 2 hộp chữ thập + 4 trụ ở góc -->
+      <visual>
+        <origin xyz="${chassis_x_offset} 0 ${chassis_center_z}" rpy="0 0 0"/>
+        <geometry>
+          <box size="${chassis_length - 2 * chassis_corner_radius} ${chassis_width} ${chassis_height}"/>
+        </geometry>
+        <material name="amr_blue"/>
+      </visual>
+      <visual>
+        <origin xyz="${chassis_x_offset} 0 ${chassis_center_z}" rpy="0 0 0"/>
+        <geometry>
+          <box size="${chassis_length} ${chassis_width - 2 * chassis_corner_radius} ${chassis_height}"/>
+        </geometry>
+        <material name="amr_blue"/>
+      </visual>
+      <xacro:chassis_corner sx="1" sy="1"/>
+      <xacro:chassis_corner sx="1" sy="-1"/>
+      <xacro:chassis_corner sx="-1" sy="1"/>
+      <xacro:chassis_corner sx="-1" sy="-1"/>
+    </xacro:unless>
+    <!-- chassis.stl: gốc toạ độ trên MẶT ĐẤT ngay dưới tâm trục 2 bánh (= base_footprint) -->
+    <xacro:if value="${use_meshes}">
+      <visual>
+        <origin xyz="0 0 ${-wheel_radius}" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="${mesh_dir}/chassis.stl" scale="${mesh_scale} ${mesh_scale} ${mesh_scale}"/>
+        </geometry>
+        <material name="amr_blue"/>
+      </visual>
+    </xacro:if>
 
     <collision>
       <origin xyz="${chassis_x_offset} 0 ${chassis_center_z}" rpy="0 0 0"/>
@@ -171,13 +194,25 @@
   <!-- reflect = +1: bánh trái (+y), -1: bánh phải (-y); mặt ngoài bánh hướng theo reflect -->
   <xacro:macro name="drive_wheel" params="side reflect">
     <link name="${side}_wheel_link">
-      <visual>
-        <origin xyz="0 0 0" rpy="${pi / 2} 0 0"/>
-        <geometry>
-          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
-        </geometry>
-        <material name="amr_black"/>
-      </visual>
+      <xacro:unless value="${use_meshes}">
+        <visual>
+          <origin xyz="0 0 0" rpy="${pi / 2} 0 0"/>
+          <geometry>
+            <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+          </geometry>
+          <material name="amr_black"/>
+        </visual>
+      </xacro:unless>
+      <!-- wheel.stl: gốc = tâm bánh, trục bánh theo Y (vẽ bánh TRÁI; bánh phải quay 180° quanh Z) -->
+      <xacro:if value="${use_meshes}">
+        <visual>
+          <origin xyz="0 0 0" rpy="0 0 ${(1 - reflect) * pi / 2}"/>
+          <geometry>
+            <mesh filename="${mesh_dir}/wheel.stl" scale="${mesh_scale} ${mesh_scale} ${mesh_scale}"/>
+          </geometry>
+          <material name="amr_black"/>
+        </visual>
+      </xacro:if>
       <collision>
         <origin xyz="0 0 0" rpy="${pi / 2} 0 0"/>
         <geometry>
@@ -274,13 +309,25 @@
   <!-- ===================== LiDAR: gốc laser_frame = tâm mặt phẳng quét ===================== -->
   <!-- Đầu quét màu đỏ, tâm trùng mặt phẳng quét -->
   <link name="laser_frame">
-    <visual>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry>
-        <cylinder radius="${lidar_head_radius}" length="${lidar_head_height}"/>
-      </geometry>
-      <material name="amr_red"/>
-    </visual>
+    <xacro:unless value="${use_meshes}">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${lidar_head_radius}" length="${lidar_head_height}"/>
+        </geometry>
+        <material name="amr_red"/>
+      </visual>
+    </xacro:unless>
+    <!-- lidar.stl: gốc = tâm mặt phẳng quét, +X = hướng tia 0° của LiDAR -->
+    <xacro:if value="${use_meshes}">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="${mesh_dir}/lidar.stl" scale="${mesh_scale} ${mesh_scale} ${mesh_scale}"/>
+        </geometry>
+        <material name="amr_red"/>
+      </visual>
+    </xacro:if>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
