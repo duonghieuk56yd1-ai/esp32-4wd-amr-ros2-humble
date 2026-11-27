@@ -9,6 +9,11 @@ Tài liệu này đi theo đúng thứ tự làm việc: **mua linh kiện → �
 nạp firmware → Bước 1 → Bước 2 → Bước 3 → Bước 4**. Làm lần lượt, mỗi bước đều có cách kiểm tra
 "đã đúng chưa" trước khi sang bước sau.
 
+> **Mới có board ESP32 và laptop, chưa có linh kiện khác?** Bắt đầu với
+> [docs/GIAI_DOAN_1_ESP32_LAPTOP.md](docs/GIAI_DOAN_1_ESP32_LAPTOP.md): hướng dẫn từng bước có giải
+> thích (micro-ROS Agent là gì, đọc log Serial, kiểm tra topic, giả lập encoder bằng 2 sợi dây, thử
+> cơ chế an toàn).
+
 ## Mục lục
 
 0. [Tổng quan hệ thống](#0-tổng-quan-hệ-thống)
